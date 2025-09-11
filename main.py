@@ -23,7 +23,7 @@ app = FastAPI(title="RSS Feed Summarizer", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000","https://4bb48a35-d1a4-43d2-88cf-59c464af94f1-dev.e1-eu-north-azure.choreoapis.dev/default/briefly-backend/v1.0"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,7 +43,7 @@ default = {
     'model': os.environ.get("FEEDSUMMARIZER_MODEL", "gpt-3.5-turbo"),
     'system': os.environ.get("FEEDSUMMARIZER_SYSTEM", "You are an expert summarizer."),
     'instruction': os.environ.get("FEEDSUMMARIZER_INSTRUCTION", "Summarize this article into a short, punchy tech fact (max 2 sentences) to put in a newsletter, prioritizing the most important information first and then adding supporting details (inverted pyramid style). Categorize it into one of the following categories: AI, New in Tech, Business, Games/Entertainment. Return the response in the following JSON format only and do NOT include any markdown or escape characters inside it :{\"summary\": \"Your summary here\", \"tag\": \"Category\"}"),
-    'maximum': int(os.environ.get("FEEDSUMMARIZER_MAX_ARTICLES", "10")),
+    'maximum': int(os.environ.get("FEEDSUMMARIZER_MAX_ARTICLES", "100")),
     'dyk_prompt': os.environ.get("FEEDSUMMARIZER_DYK_INSTRUCTION","Turn this article into one fun, factual, and that feels like a surprising fact or hook for a newsletter. It should be exciting and attention-grabbing, but it does not have to start with 'Did you know'."),
     'time_lapse': int(os.environ.get("FEEDSUMMARIZER_TIME_LAPSE", "86400"))
 }
@@ -243,13 +243,54 @@ def save_to_csv(articles):
         for article in articles:
             writer.writerow(article.to_dict())
 
-def save_to_json(articles):
-    """Save articles to JSON file (overwrite existing data)"""
-    # Convert articles to dictionaries
-    data_to_save = [article.to_dict() for article in articles]
-
+def clear_old_articles():
+    """Remove articles older than a month from the JSON file"""
+    if not os.path.exists(json_file):
+        return
+    
+    try:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            articles = json.load(f)
+    except:
+        return
+    
+    one_month_ago = datetime.now().replace(day=1) - pd.DateOffset(months=1)
+    filtered_articles = []
+    for article in articles:
+        try:
+            article_date = datetime.fromisoformat(article['timestamp'])
+            if article_date >= one_month_ago:
+                filtered_articles.append(article)
+        except:
+            # If timestamp is invalid, keep the article
+            filtered_articles.append(article)
+    
     with open(json_file, 'w', encoding='utf-8') as f:
-        json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+        json.dump(filtered_articles, f, indent=2, ensure_ascii=False)
+
+def save_to_json(articles):
+    """Append new articles to JSON file, avoiding duplicates by URL"""
+    # Load existing articles
+    existing_articles = []
+    if os.path.exists(json_file):
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                existing_articles = json.load(f)
+        except:
+            existing_articles = []
+    
+    # Get set of existing URLs for quick lookup
+    existing_urls = {art['url'] for art in existing_articles}
+    
+    # Filter new articles to avoid duplicates
+    new_articles = [art for art in articles if art.to_dict()['url'] not in existing_urls]
+    
+    if new_articles:
+        # Append new articles
+        existing_articles.extend([art.to_dict() for art in new_articles])
+        
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(existing_articles, f, indent=2, ensure_ascii=False)
 
 def process_feeds_background():
     """Background process to handle RSS feeds - runs weekly"""
@@ -294,7 +335,7 @@ def process_feeds_background():
             print(f"Error processing {feed_info['name']}: {str(e)}")
     
     if all_articles:
-        save_to_csv(all_articles)
+        clear_old_articles()  # Clear old articles before saving
         save_to_json(all_articles)
         print(f"Processed and saved {len(all_articles)} articles")
     else:
@@ -308,7 +349,7 @@ async def get_home():
     return "Hi"
 
 @app.get("/api/articles", response_model=List[ArticleResponse])
-async def get_articles(limit: int = 10):
+async def get_articles(limit: int = 100):
     """Get recent articles"""
     if os.path.exists(json_file):
         try:
