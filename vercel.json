@@ -1,14 +1,12 @@
 {
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/(.*)",
       "destination": "api/index.py"
-    }
-  ],
-  "crons": [
+    },
     {
-      "path": "/api/process-feeds?sync=true",
-      "schedule": "0 9 * * 1"
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ]
 }
